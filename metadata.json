@@ -1,0 +1,6 @@
+{
+  "name": "Voyager AI: Voice Travel Assistant",
+  "description": "A high-end travel booking platform featuring an intelligent voice agent for seamless bookings and 24/7 customer support.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
