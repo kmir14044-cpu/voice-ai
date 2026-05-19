@@ -1,81 +1,60 @@
-import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
+import Groq from "groq-sdk";
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY!,
-  httpOptions: {
-    headers: {
-      "User-Agent": "aistudio-build",
-    },
-  },
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY!,
 });
 
 // Mock Database / State
 const TRAVEL_DATA = {
   flights: [
-    { id: "F1", destination: "Paris", price: 450, time: "10:00 AM" },
-    { id: "F2", destination: "Tokyo", price: 850, time: "2:00 PM" },
-    { id: "F3", destination: "New York", price: 300, time: "8:00 AM" },
+    {
+      id: "F1",
+      destination: "Paris",
+      price: 450,
+      time: "10:00 AM",
+    },
+    {
+      id: "F2",
+      destination: "Tokyo",
+      price: 850,
+      time: "2:00 PM",
+    },
+    {
+      id: "F3",
+      destination: "New York",
+      price: 300,
+      time: "8:00 AM",
+    },
   ],
+
   hotels: [
-    { id: "H1", name: "Grand Royale", location: "Paris", price: 200 },
-    { id: "H2", name: "Zen Garden", location: "Tokyo", price: 150 },
-    { id: "H3", name: "Skyline Suite", location: "New York", price: 250 },
+    {
+      id: "H1",
+      name: "Grand Royale",
+      location: "Paris",
+      price: 200,
+    },
+    {
+      id: "H2",
+      name: "Zen Garden",
+      location: "Tokyo",
+      price: 150,
+    },
+    {
+      id: "H3",
+      name: "Skyline Suite",
+      location: "New York",
+      price: 250,
+    },
   ],
+
   bookings: [] as any[],
 };
 
-// Gemini Functions
-const bookTravelFunction: FunctionDeclaration = {
-  name: "bookTravel",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      type: {
-        type: Type.STRING,
-        enum: ["flight", "hotel"],
-      },
-      itemId: {
-        type: Type.STRING,
-      },
-      customerName: {
-        type: Type.STRING,
-      },
-    },
-    required: ["type", "itemId", "customerName"],
-  },
-};
-
-const searchTravelFunction: FunctionDeclaration = {
-  name: "searchTravel",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      location: {
-        type: Type.STRING,
-      },
-      type: {
-        type: Type.STRING,
-        enum: ["flight", "hotel", "both"],
-      },
-    },
-    required: ["type"],
-  },
-};
-
-const getSupportFunction: FunctionDeclaration = {
-  name: "getSupport",
-  parameters: {
-    type: Type.OBJECT,
-    properties: {
-      topic: {
-        type: Type.STRING,
-      },
-    },
-    required: ["topic"],
-  },
-};
-
-export default async function handler(req: any, res: any) {
+export default async function handler(
+  req: any,
+  res: any
+) {
   if (req.method !== "POST") {
     return res.status(405).json({
       error: "Method not allowed",
@@ -85,100 +64,116 @@ export default async function handler(req: any, res: any) {
   try {
     const { message, history } = req.body;
 
-    const chat = ai.chats.create({
-      model: "gemini-2.0-flash-lite",
-      config: {
-        systemInstruction: `
-You are Voyager, a sophisticated AI travel assistant.
-You help users book flights, hotels,
-and provide professional customer support.
+    // Convert old history format
+    const formattedHistory =
+      (history || []).map((msg: any) => ({
+        role:
+          msg.role === "model"
+            ? "assistant"
+            : msg.role,
+        content:
+          msg.parts?.[0]?.text ||
+          msg.content ||
+          "",
+      }));
 
-Current Travel Data:
-${JSON.stringify({
-  flights: TRAVEL_DATA.flights,
-  hotels: TRAVEL_DATA.hotels,
-})}
-`,
-        tools: [
-          {
-            functionDeclarations: [
-              bookTravelFunction,
-              searchTravelFunction,
-              getSupportFunction,
-            ],
-          },
-        ],
-      },
-      history: history || [],
-    });
+    // Search Logic
+    let searchResults = "";
 
-    const result = await chat.sendMessage({
-      message,
-    });
+    const lowerMessage =
+      message.toLowerCase();
 
-    if (result.functionCalls) {
-      const responses: any[] = [];
+    const destinations = [
+      "paris",
+      "tokyo",
+      "new york",
+    ];
 
-      for (const call of result.functionCalls) {
-        if (call.name === "searchTravel") {
-          const { location, type } =
-            call.args as any;
+    const foundLocation =
+      destinations.find((city) =>
+        lowerMessage.includes(city)
+      );
 
-          const flights =
-            type === "flight" ||
-            type === "both"
-              ? TRAVEL_DATA.flights.filter(
-                  (f) =>
-                    !location ||
-                    f.destination.toLowerCase() ===
-                      location.toLowerCase()
-                )
-              : [];
+    if (
+      lowerMessage.includes("flight") ||
+      lowerMessage.includes("hotel") ||
+      lowerMessage.includes("travel")
+    ) {
+      const flights =
+        TRAVEL_DATA.flights.filter(
+          (f) =>
+            !foundLocation ||
+            f.destination.toLowerCase() ===
+              foundLocation
+        );
 
-          const hotels =
-            type === "hotel" ||
-            type === "both"
-              ? TRAVEL_DATA.hotels.filter(
-                  (h) =>
-                    !location ||
-                    h.location.toLowerCase() ===
-                      location.toLowerCase()
-                )
-              : [];
+      const hotels =
+        TRAVEL_DATA.hotels.filter(
+          (h) =>
+            !foundLocation ||
+            h.location.toLowerCase() ===
+              foundLocation
+        );
 
-          responses.push({
-            name: call.name,
-            response: {
-              results: {
-                flights,
-                hotels,
-              },
-            },
-            id: call.id,
-          });
-        }
-      }
+      searchResults = `
+Available Travel Data:
 
-      const finalResult =
-        await chat.sendMessage({
-          message: {
-            parts: responses.map((r) => ({
-              functionResponse: {
-                name: r.name,
-                response: r.response,
-                id: r.id,
-              },
-            })),
-          } as any,
-        });
+Flights:
+${JSON.stringify(flights, null, 2)}
 
-      return res.json({
-        text: finalResult.text,
-      });
+Hotels:
+${JSON.stringify(hotels, null, 2)}
+`;
     }
 
-    return res.json({
-      text: result.text,
+    const completion =
+      await groq.chat.completions.create({
+        model:
+          "llama-3.1-8b-instant",
+
+        temperature: 0.7,
+
+        messages: [
+          {
+            role: "system",
+            content: `
+You are Voyager, a sophisticated AI travel assistant.
+
+You help users:
+- Book flights
+- Find hotels
+- Travel planning
+- Customer support
+
+Current travel database:
+${JSON.stringify(TRAVEL_DATA)}
+
+${searchResults}
+
+If the user asks about travel,
+use the provided travel data.
+
+Be conversational and professional.
+`,
+          },
+
+          ...formattedHistory,
+
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+      });
+
+    const response =
+      completion.choices[0]?.message
+        ?.content;
+
+    return res.status(200).json({
+      text:
+        response ||
+        "Sorry, I could not respond.",
     });
   } catch (error: any) {
     console.error(error);
